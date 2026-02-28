@@ -292,6 +292,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   const MAX_FRAMES = 60; // cap buffer to bound memory and export time
   const frameBufferRef = useRef<string[]>([]);
   const isRecordingRef = useRef(false);
+  const lastFrameCaptureRef = useRef<number>(0); // timestamp of last frame captured (for throttling)
   const prevIsFinalRef = useRef(true); // tracks previous isFinal to detect stream start
   const renderSerialRef = useRef<Promise<void>>(Promise.resolve()); // serializes renders during streaming
   const [isExporting, setIsExporting] = useState<'gif' | 'video' | null>(null);
@@ -433,7 +434,11 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       // Capture rendered SVG frame for animation export (ring buffer, keeps most recent MAX_FRAMES).
       // Re-export with skipInliningFonts: false so font @font-face data is embedded in the SVG
       // string — otherwise rasterising via <img> in a Blob URL context falls back to default fonts.
-      if (isRecordingRef.current) {
+      // Throttled to at most once per 200 ms to avoid doubling CPU cost on every streaming render;
+      // the final frame always bypasses the throttle (lastFrameCaptureRef is reset to 0 in doFinal).
+      const CAPTURE_INTERVAL_MS = 200;
+      if (isRecordingRef.current && Date.now() - lastFrameCaptureRef.current >= CAPTURE_INTERVAL_MS) {
+        lastFrameCaptureRef.current = Date.now();
         const exportSvg = await exportToSvg({
           elements: excalidrawEls as any,
           appState: { viewBackgroundColor: "transparent", exportBackground: false } as any,
@@ -518,11 +523,15 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         captureInitialElements(allConverted);
         // Only set elements if user hasn't edited yet (editedElements means user edits exist)
         if (!editedElements) onElements?.(allConverted);
-        if (!editedElements) await renderSvgPreview(drawElements, viewport, base);
-
-        // Stop recording and signal export availability
-        isRecordingRef.current = false;
-        setExportReady(frameBufferRef.current.length > 1);
+        try {
+          // Reset capture throttle so the final frame is always stored regardless of timing
+          lastFrameCaptureRef.current = 0;
+          if (!editedElements) await renderSvgPreview(drawElements, viewport, base);
+        } finally {
+          // Always stop recording and signal export availability, even if the render throws
+          isRecordingRef.current = false;
+          setExportReady(frameBufferRef.current.length > 1);
+        }
       };
       // Chain the final render onto the serialized render queue so it cannot
       // interleave with any in-flight streaming renders, preserving frame order.

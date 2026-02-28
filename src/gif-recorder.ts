@@ -156,7 +156,8 @@ export async function encodeSvgFramesToGif(
   if (!Number.isFinite(fps) || fps <= 0) {
     throw new Error(`Invalid fps value: ${fps}. Expected a finite, positive number.`);
   }
-  const delay  = Math.max(1, Math.round(100 / fps)); // centiseconds
+  // GIF frame delay is an unsigned 16-bit field (centiseconds); clamp to [1, 65535]
+  const delay  = Math.min(65535, Math.max(1, Math.round(100 / fps)));
 
   const palette = buildPalette();
 
