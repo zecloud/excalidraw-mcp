@@ -295,7 +295,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   const lastFrameCaptureRef = useRef<number>(0); // timestamp of last frame captured (for throttling)
   const prevIsFinalRef = useRef(true); // tracks previous isFinal to detect stream start
   const renderSerialRef = useRef<Promise<void>>(Promise.resolve()); // serializes renders during streaming
-  const [isExporting, setIsExporting] = useState<'gif' | 'video' | null>(null);
+  const [isExporting, setIsExporting] = useState<"gif" | "video" | null>(null);
   const [exportReady, setExportReady] = useState(false);
 
   /** Apply user zoom on top of the stored base viewBox. */
@@ -699,8 +699,8 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
 
   /** Parse an SVG element's viewBox into { width, height }, returning null on failure/NaN. */
   const getExportViewport = useCallback((): { width: number; height: number } | null => {
-    const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
-    const vb = svgEl?.getAttribute('viewBox')?.trim()?.split(/\s+/).map(Number);
+    const svgEl = svgRef.current?.querySelector(".svg-wrapper svg") as SVGSVGElement | null;
+    const vb = svgEl?.getAttribute("viewBox")?.trim()?.split(/\s+/).map(Number);
     if (vb && vb.length === 4 && vb.every(n => !isNaN(n))) {
       return { width: vb[2], height: vb[3] };
     }
@@ -774,7 +774,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
             disabled={isExporting !== null}
             title="Export animation as GIF"
           >
-            {isExporting === 'gif' ? '⏳ Encoding GIF…' : '🎞 Export GIF'}
+            {isExporting === "gif" ? "⏳ Encoding GIF…" : "🎞 Export GIF"}
           </button>
           <button
             className="export-btn export-video-btn"
@@ -782,7 +782,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
             disabled={isExporting !== null}
             title="Export animation as WebM video"
           >
-            {isExporting === 'video' ? '⏳ Encoding Video…' : '🎬 Export Video'}
+            {isExporting === "video" ? "⏳ Encoding Video…" : "🎬 Export Video"}
           </button>
         </div>
       )}
