@@ -19,12 +19,32 @@ export class VideoRecorder {
   }
 
   start(): void {
+    if (typeof MediaRecorder === 'undefined') {
+      throw new Error('MediaRecorder API is not supported in this browser');
+    }
+
     this.chunks = [];
-    const stream   = this.canvas.captureStream(24); // 24 fps target
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9'
-      : 'video/webm';
-    this.mediaRecorder = new MediaRecorder(stream, { mimeType });
+    const stream = this.canvas.captureStream(24); // 24 fps target
+
+    let mimeType: string;
+    if (typeof MediaRecorder.isTypeSupported === 'function') {
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        mimeType = 'video/webm';
+      } else {
+        throw new Error('WebM video recording is not supported in this browser');
+      }
+    } else {
+      // Fallback for environments without isTypeSupported; assume basic WebM support.
+      mimeType = 'video/webm';
+    }
+
+    try {
+      this.mediaRecorder = new MediaRecorder(stream, { mimeType });
+    } catch (err) {
+      throw new Error(`Failed to create MediaRecorder with mimeType "${mimeType}": ${err}`);
+    }
     this.mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
@@ -50,12 +70,19 @@ export class VideoRecorder {
   }
 
   stop(): Promise<string> {
+    if (!this.mediaRecorder) {
+      return Promise.reject(new Error('MediaRecorder has not been started'));
+    }
+
+    const recorder = this.mediaRecorder;
+
     return new Promise((resolve) => {
-      this.mediaRecorder!.onstop = () => {
+      recorder.onstop = () => {
         const blob = new Blob(this.chunks, { type: 'video/webm' });
         resolve(URL.createObjectURL(blob));
+        this.mediaRecorder = null;
       };
-      this.mediaRecorder!.stop();
+      recorder.stop();
     });
   }
 }

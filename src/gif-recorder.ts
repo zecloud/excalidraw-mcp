@@ -27,6 +27,9 @@ function quantizePixel(r: number, g: number, b: number): number {
 /**
  * GIF LZW encoder. Returns raw code bytes (not yet wrapped in sub-blocks).
  * minCodeSize is 8 for a 256-color palette.
+ *
+ * Uses numeric Map keys (prefixCode << 8 | pixelByte) instead of string
+ * concatenation to avoid repeated heap allocations per pixel.
  */
 function lzwEncode(pixels: Uint8Array, minCodeSize: number): number[] {
   const clearCode = 1 << minCodeSize;   // 256
@@ -36,16 +39,14 @@ function lzwEncode(pixels: Uint8Array, minCodeSize: number): number[] {
   let bitBuf = 0;
   let bitLen = 0;
 
-  // Initialize with placeholder values; reset() sets the real ones before use
-  let table: Map<string, number> = new Map();
+  // Initialize with placeholder values; reset() sets the real ones before use.
+  // Keys encode (prefixCode << 8) | nextByte; max key = (4095 << 8)|255 = 1,048,319.
+  let table: Map<number, number> = new Map();
   let nextCode = 0;
   let codeSize = 0;
 
   const reset = () => {
     table = new Map();
-    for (let i = 0; i < clearCode; i++) {
-      table.set(String.fromCharCode(i), i);
-    }
     nextCode = clearCode + 2; // skip clearCode and eoiCode slots
     codeSize = minCodeSize + 1;
   };
@@ -69,17 +70,21 @@ function lzwEncode(pixels: Uint8Array, minCodeSize: number): number[] {
     return bytes;
   }
 
-  let prefix = String.fromCharCode(pixels[0]);
+  // prefixCode is the LZW code for the current match prefix.
+  // For single bytes it equals the byte value (implicit in the standard table);
+  // for compound sequences it is the code assigned when the sequence was first seen.
+  let prefixCode = pixels[0];
 
   for (let i = 1; i < pixels.length; i++) {
-    const c        = String.fromCharCode(pixels[i]);
-    const combined = prefix + c;
-    if (table.has(combined)) {
-      prefix = combined;
+    const byte = pixels[i];
+    const key  = (prefixCode << 8) | byte;
+    const found = table.get(key);
+    if (found !== undefined) {
+      prefixCode = found;
     } else {
-      emit(table.get(prefix)!);
+      emit(prefixCode);
       if (nextCode < 4096) {
-        table.set(combined, nextCode++);
+        table.set(key, nextCode++);
         if (nextCode > (1 << codeSize) && codeSize < 12) {
           codeSize++;
         }
@@ -87,11 +92,11 @@ function lzwEncode(pixels: Uint8Array, minCodeSize: number): number[] {
         emit(clearCode);
         reset();
       }
-      prefix = c;
+      prefixCode = byte;
     }
   }
 
-  emit(table.get(prefix)!);
+  emit(prefixCode);
   emit(eoiCode);
   if (bitLen > 0) bytes.push(bitBuf & 0xff);
 
@@ -116,7 +121,8 @@ async function svgToIndexedPixels(
     const canvas = document.createElement('canvas');
     canvas.width  = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Failed to get 2D canvas context');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
@@ -141,7 +147,7 @@ export async function encodeSvgFramesToGif(
   viewport: { width: number; height: number },
   fps = 8,
 ): Promise<string> {
-  // Scale to max 512 px wide, keep 4:3 ratio
+  // Scale to max 512 px wide, preserving viewport aspect ratio
   const scale  = Math.min(1, 512 / Math.max(viewport.width, 1));
   const width  = Math.max(2, Math.round(viewport.width  * scale));
   const height = Math.max(2, Math.round(viewport.height * scale));

@@ -289,9 +289,11 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   const baseViewBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // Animation recording
+  const MAX_FRAMES = 60; // cap buffer to bound memory and export time
   const frameBufferRef = useRef<string[]>([]);
   const isRecordingRef = useRef(false);
   const prevIsFinalRef = useRef(true); // tracks previous isFinal to detect stream start
+  const renderSerialRef = useRef<Promise<void>>(Promise.resolve()); // serializes renders during streaming
   const [isExporting, setIsExporting] = useState<'gif' | 'video' | null>(null);
   const [exportReady, setExportReady] = useState(false);
 
@@ -428,8 +430,8 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         applyZoom();
       }
 
-      // Capture rendered SVG frame for animation export
-      if (isRecordingRef.current) {
+      // Capture rendered SVG frame for animation export (capped to MAX_FRAMES)
+      if (isRecordingRef.current && frameBufferRef.current.length < MAX_FRAMES) {
         const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
         if (svgEl) {
           const serializer = new XMLSerializer();
@@ -454,10 +456,18 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       frameBufferRef.current = [];
       setExportReady(false);
       isRecordingRef.current = true;
+      renderSerialRef.current = Promise.resolve(); // reset render queue for new session
     }
     prevIsFinalRef.current = isFinal;
 
     if (isFinal) {
+      // If a standalone final payload arrives without a preceding stream, clear
+      // any stale frames/export state from a previous session.
+      if (!isRecordingRef.current) {
+        frameBufferRef.current = [];
+        setExportReady(false);
+      }
+
       // Final input — parse complete JSON, render ALL elements
       const parsed = parsePartialElements(str);
       let { viewport, drawElements, restoreId, deleteIds } = extractViewportAndElements(parsed);
@@ -550,10 +560,15 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         latestRef.current = drawElements;
         setCount(drawElements.length);
         const jittered = drawElements.map((el: any) => ({ ...el, seed: Math.floor(Math.random() * 1e9) }));
-        renderSvgPreview(jittered, viewport, base);
+        // Serialize renders while recording so frames are captured in stream order
+        renderSerialRef.current = renderSerialRef.current
+          .then(() => renderSvgPreview(jittered, viewport, base))
+          .catch((e) => { fsLog(`renderSvgPreview error (stream): ${e}`); });
       } else if (base && base.length > 0 && latestRef.current.length === 0) {
         // First render: show restored base before new elements stream in
-        renderSvgPreview([], viewport, base);
+        renderSerialRef.current = renderSerialRef.current
+          .then(() => renderSvgPreview([], viewport, base))
+          .catch((e) => { fsLog(`renderSvgPreview error (base): ${e}`); });
       }
     };
     doStream();
