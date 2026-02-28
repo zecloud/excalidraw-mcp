@@ -20,7 +20,21 @@ export async function startStreamableHTTPServer(
   createServer: () => McpServer,
   options?: { defaultPort?: number },
 ): Promise<void> {
-  const port = parseInt(process.env.PORT ?? String(options?.defaultPort ?? 3001), 10);
+  const rawPort = process.env.PORT;
+  let port: number;
+  if (rawPort !== undefined) {
+    const parsedPort = Number(rawPort);
+    if (Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+      port = parsedPort;
+    } else {
+      console.warn(
+        `Ignoring invalid PORT environment variable (${rawPort}); using default port instead.`,
+      );
+      port = options?.defaultPort ?? 3001;
+    }
+  } else {
+    port = options?.defaultPort ?? 3001;
+  }
 
   const app = createMcpExpressApp({ host: "0.0.0.0" });
   app.use(cors());
@@ -51,12 +65,13 @@ export async function startStreamableHTTPServer(
     }
   });
 
-  const httpServer = app.listen(port, (err) => {
-    if (err) {
-      console.error("Failed to start server:", err);
-      process.exit(1);
-    }
+  const httpServer = app.listen(port, () => {
     console.log(`MCP server listening on http://localhost:${port}/mcp`);
+  });
+
+  httpServer.on("error", (err) => {
+    console.error("Failed to start server:", err);
+    process.exit(1);
   });
 
   const shutdown = () => {
