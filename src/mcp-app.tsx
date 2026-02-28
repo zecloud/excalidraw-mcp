@@ -475,10 +475,16 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
 
     // Detect new streaming session: was finished, now starting again
     if (!isFinal && prevIsFinalRef.current) {
-      frameBufferRef.current = [];
-      setExportReady(false);
-      isRecordingRef.current = true;
-      renderSerialRef.current = Promise.resolve(); // reset render queue for new session
+      // Wait for any in-flight renders from the previous session to finish before
+      // clearing the frame buffer and starting recording, so stale renders from the
+      // old session can't push frames into the new session's buffer.
+      const previousChain = renderSerialRef.current;
+      renderSerialRef.current = previousChain.then(() => {
+        frameBufferRef.current = [];
+        lastFrameCaptureRef.current = 0;
+        setExportReady(false);
+        isRecordingRef.current = true;
+      });
     }
     prevIsFinalRef.current = isFinal;
 
@@ -694,7 +700,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   /** Parse an SVG element's viewBox into { width, height }, returning null on failure/NaN. */
   const getExportViewport = useCallback((): { width: number; height: number } | null => {
     const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
-    const vb = svgEl?.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
+    const vb = svgEl?.getAttribute('viewBox')?.trim()?.split(/\s+/).map(Number);
     if (vb && vb.length === 4 && vb.every(n => !isNaN(n))) {
       return { width: vb[2], height: vb[3] };
     }
