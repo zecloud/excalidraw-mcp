@@ -151,6 +151,11 @@ export async function encodeSvgFramesToGif(
   const scale  = Math.min(1, 512 / Math.max(viewport.width, 1));
   const width  = Math.max(2, Math.round(viewport.width  * scale));
   const height = Math.max(2, Math.round(viewport.height * scale));
+
+  // Validate fps to ensure we don't produce an invalid frame delay
+  if (!Number.isFinite(fps) || fps <= 0) {
+    throw new Error(`Invalid fps value: ${fps}. Expected a finite, positive number.`);
+  }
   const delay  = Math.max(1, Math.round(100 / fps)); // centiseconds
 
   const palette = buildPalette();
