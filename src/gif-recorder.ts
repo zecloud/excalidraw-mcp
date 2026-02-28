@@ -3,6 +3,9 @@
  * Uses LZW compression + 6×6×6 color cube quantization.
  */
 
+/** Maximum number of frames captured into the frame buffer and encoded into GIF. */
+export const MAX_GIF_FRAMES = 60;
+
 // 6×6×6 = 216 colors; remaining 40 slots stay black (already 0)
 function buildPalette(): Uint8Array {
   const pal = new Uint8Array(256 * 3);
@@ -109,17 +112,17 @@ async function svgToIndexedPixels(
   height: number,
   ctx: CanvasRenderingContext2D,
 ): Promise<Uint8Array> {
-  const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+  const blob = new Blob([svgStr], { type: "image/svg+xml" });
   const url  = URL.createObjectURL(blob);
   try {
     const img = new Image();
     img.src   = url;
     await new Promise<void>((resolve, reject) => {
       img.onload  = () => resolve();
-      img.onerror = () => reject(new Error('SVG load failed'));
+      img.onerror = () => reject(new Error("SVG load failed"));
     });
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
 
@@ -158,15 +161,15 @@ export async function encodeSvgFramesToGif(
   const palette = buildPalette();
 
   // Create a single reusable canvas for all frame rasterizations.
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width  = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Failed to get 2D canvas context');
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Failed to get 2D canvas context");
 
   // Render frames (skip broken ones)
   const renderedFrames: Uint8Array[] = [];
-  const limit = Math.min(frames.length, 60); // cap at 60 frames
+  const limit = Math.min(frames.length, MAX_GIF_FRAMES);
   for (let f = 0; f < limit; f++) {
     try {
       renderedFrames.push(await svgToIndexedPixels(frames[f], width, height, ctx));
@@ -175,12 +178,12 @@ export async function encodeSvgFramesToGif(
     }
   }
 
-  if (renderedFrames.length === 0) throw new Error('No frames to encode');
+  if (renderedFrames.length === 0) throw new Error("No frames to encode");
 
   const buf: number[] = [];
 
   // GIF89a header
-  for (const c of 'GIF89a') buf.push(c.charCodeAt(0));
+  for (const c of "GIF89a") buf.push(c.charCodeAt(0));
 
   // Logical Screen Descriptor
   buf.push(width  & 0xff, (width  >> 8) & 0xff);
@@ -194,7 +197,7 @@ export async function encodeSvgFramesToGif(
 
   // Netscape Application Extension (infinite loop)
   buf.push(0x21, 0xFF, 0x0B);
-  for (const c of 'NETSCAPE2.0') buf.push(c.charCodeAt(0));
+  for (const c of "NETSCAPE2.0") buf.push(c.charCodeAt(0));
   buf.push(0x03, 0x01, 0x00, 0x00, 0x00); // sub-block + loop-count LE + terminator
 
   for (const indexed of renderedFrames) {
@@ -228,5 +231,5 @@ export async function encodeSvgFramesToGif(
   // GIF Trailer
   buf.push(0x3B);
 
-  return URL.createObjectURL(new Blob([new Uint8Array(buf)], { type: 'image/gif' }));
+  return URL.createObjectURL(new Blob([new Uint8Array(buf)], { type: "image/gif" }));
 }

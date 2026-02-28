@@ -5,7 +5,7 @@ import morphdom from "morphdom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { initPencilAudio, playStroke } from "./pencil-audio";
 import { captureInitialElements, onEditorChange, setStorageKey, loadPersistedElements, getLatestEditedElements, setCheckpointId } from "./edit-context";
-import { encodeSvgFramesToGif } from "./gif-recorder";
+import { encodeSvgFramesToGif, MAX_GIF_FRAMES } from "./gif-recorder";
 import { VideoRecorder } from "./video-recorder";
 import "./global.css";
 
@@ -289,7 +289,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   const baseViewBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // Animation recording
-  const MAX_FRAMES = 60; // cap buffer to bound memory and export time
+  const MAX_FRAMES = MAX_GIF_FRAMES; // cap buffer to bound memory and export time
   const frameBufferRef = useRef<string[]>([]);
   const isRecordingRef = useRef(false);
   const lastFrameCaptureRef = useRef<number>(0); // timestamp of last frame captured (for throttling)
