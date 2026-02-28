@@ -441,14 +441,22 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
           exportPadding: EXPORT_PADDING,
           skipInliningFonts: false,
         });
+        // Copy the rendered DOM svg's viewBox onto the export SVG so the captured frame reflects
+        // the same 4:3-normalised + user-zoom viewport that is shown on screen.
+        const renderedViewBox = renderedSvg?.getAttribute("viewBox");
+        if (renderedViewBox) {
+          exportSvg.setAttribute("viewBox", renderedViewBox);
+        }
         const serialized = new XMLSerializer().serializeToString(exportSvg);
         const buffer = frameBufferRef.current;
         if (buffer.length >= MAX_FRAMES) buffer.shift(); // drop oldest to stay within cap
         buffer.push(serialized);
       }
     } catch (error) {
-      // export can fail on partial/malformed elements
+      // export can fail on partial/malformed elements; rethrow so the upstream serial-queue
+      // .catch() handlers see the failure and the queue does not silently advance.
       fsLog(`renderSvgPreview: SVG export failed: ${error}`);
+      throw error;
     }
   }, [applyViewBox, animateViewBox, applyZoom]);
 
