@@ -709,16 +709,16 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
 
   const handleExportGif = useCallback(async () => {
     if (frameBufferRef.current.length < 2 || isExporting) return;
-    setIsExporting('gif');
+    setIsExporting("gif");
     try {
       // Derive export dimensions from the rendered SVG viewBox so the GIF
       // matches the 4:3-normalised aspect ratio the user actually sees.
       const vp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
       const frames = frameBufferRef.current.slice();
       const url = await encodeSvgFramesToGif(frames, vp, 8);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = 'diagram.gif';
+      a.download = "diagram.gif";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (e) {
@@ -730,15 +730,17 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
 
   const handleExportVideo = useCallback(async () => {
     if (frameBufferRef.current.length < 2 || isExporting) return;
-    setIsExporting('video');
+    setIsExporting("video");
     try {
       // Derive export dimensions from the rendered SVG viewBox (matches 4:3-normalised preview),
       // capped at 512 px wide to avoid over-large canvas allocations.
       const rawVp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
       const MAX_VIDEO_WIDTH = 512;
-      const scale = Math.min(1, MAX_VIDEO_WIDTH / rawVp.width);
-      const vpWidth  = Math.round(rawVp.width  * scale);
-      const vpHeight = Math.round(rawVp.height * scale);
+      // Guard against non-positive dimensions (e.g., zero-sized or missing viewBox)
+      const safeVp = (rawVp.width > 0 && rawVp.height > 0) ? rawVp : { width: 800, height: 600 };
+      const scale = Math.min(1, MAX_VIDEO_WIDTH / safeVp.width);
+      const vpWidth  = Math.max(2, Math.round(safeVp.width  * scale));
+      const vpHeight = Math.max(2, Math.round(safeVp.height * scale));
       const recorder = new VideoRecorder(vpWidth, vpHeight);
       recorder.start();
       const frames = frameBufferRef.current.slice();
@@ -747,9 +749,9 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         await new Promise(res => setTimeout(res, 80)); // ~12 fps
       }
       const url = await recorder.stop();
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = 'diagram.webm';
+      a.download = "diagram.webm";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (e) {

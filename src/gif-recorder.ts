@@ -107,6 +107,7 @@ async function svgToIndexedPixels(
   svgStr: string,
   width: number,
   height: number,
+  ctx: CanvasRenderingContext2D,
 ): Promise<Uint8Array> {
   const blob = new Blob([svgStr], { type: 'image/svg+xml' });
   const url  = URL.createObjectURL(blob);
@@ -118,11 +119,6 @@ async function svgToIndexedPixels(
       img.onerror = () => reject(new Error('SVG load failed'));
     });
 
-    const canvas = document.createElement('canvas');
-    canvas.width  = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Failed to get 2D canvas context');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
@@ -161,12 +157,19 @@ export async function encodeSvgFramesToGif(
 
   const palette = buildPalette();
 
+  // Create a single reusable canvas for all frame rasterizations.
+  const canvas = document.createElement('canvas');
+  canvas.width  = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Failed to get 2D canvas context');
+
   // Render frames (skip broken ones)
   const renderedFrames: Uint8Array[] = [];
   const limit = Math.min(frames.length, 60); // cap at 60 frames
   for (let f = 0; f < limit; f++) {
     try {
-      renderedFrames.push(await svgToIndexedPixels(frames[f], width, height));
+      renderedFrames.push(await svgToIndexedPixels(frames[f], width, height, ctx));
     } catch {
       // skip
     }

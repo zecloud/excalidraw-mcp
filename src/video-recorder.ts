@@ -79,13 +79,37 @@ export class VideoRecorder {
     }
 
     const recorder = this.mediaRecorder;
+    const STOP_TIMEOUT_MS = 10_000;
 
-    return new Promise((resolve) => {
-      recorder.onstop = () => {
-        const blob = new Blob(this.chunks, { type: 'video/webm' });
-        resolve(URL.createObjectURL(blob));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        recorder.onstop  = null;
+        recorder.onerror = null;
         this.mediaRecorder = null;
+        fn();
       };
+
+      const timeoutId = setTimeout(() => {
+        settle(() => reject(new Error('MediaRecorder stop timed out')));
+        try { if (recorder.state !== 'inactive') recorder.stop(); } catch { /* ignore */ }
+      }, STOP_TIMEOUT_MS);
+
+      recorder.onstop = () => {
+        settle(() => {
+          const blob = new Blob(this.chunks, { type: 'video/webm' });
+          resolve(URL.createObjectURL(blob));
+        });
+      };
+
+      recorder.onerror = (event) => {
+        const err = (event as Event & { error?: DOMException }).error;
+        settle(() => reject(err ?? new Error('MediaRecorder error')));
+      };
+
       recorder.stop();
     });
   }
