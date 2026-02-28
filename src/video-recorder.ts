@@ -23,6 +23,10 @@ export class VideoRecorder {
       throw new Error('MediaRecorder API is not supported in this browser');
     }
 
+    if (typeof this.canvas.captureStream !== 'function') {
+      throw new Error('canvas.captureStream is not supported in this browser');
+    }
+
     this.chunks = [];
     const stream = this.canvas.captureStream(24); // 24 fps target
 

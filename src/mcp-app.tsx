@@ -685,7 +685,8 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       // Derive export dimensions from the rendered SVG viewBox so the GIF
       // matches the 4:3-normalised aspect ratio the user actually sees.
       const vp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
-      const url = await encodeSvgFramesToGif(frameBufferRef.current, vp, 8);
+      const frames = frameBufferRef.current.slice();
+      const url = await encodeSvgFramesToGif(frames, vp, 8);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'diagram.gif';
@@ -711,7 +712,8 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       const vpHeight = Math.round(rawVp.height * scale);
       const recorder = new VideoRecorder(vpWidth, vpHeight);
       recorder.start();
-      for (const frame of frameBufferRef.current) {
+      const frames = frameBufferRef.current.slice();
+      for (const frame of frames) {
         await recorder.captureFrame(frame);
         await new Promise(res => setTimeout(res, 80)); // ~12 fps
       }
