@@ -6,3 +6,4 @@ dist/
 bun.lock
 .vscode
 opencode.json
+local.settings.json

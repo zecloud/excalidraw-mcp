@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: excalidraw-mcp-azure-functions
+metadata:
+  template: excalidraw-mcp-azure-functions@1.0.0
+services:
+  mcp:
+    project: .
+    language: js
+    host: function
