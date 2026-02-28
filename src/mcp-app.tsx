@@ -5,6 +5,8 @@ import morphdom from "morphdom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { initPencilAudio, playStroke } from "./pencil-audio";
 import { captureInitialElements, onEditorChange, setStorageKey, loadPersistedElements, getLatestEditedElements, setCheckpointId } from "./edit-context";
+import { encodeSvgFramesToGif } from "./gif-recorder";
+import { VideoRecorder } from "./video-recorder";
 import "./global.css";
 
 // ============================================================
@@ -286,6 +288,13 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   const zoomRef = useRef({ scale: 1, panX: 0, panY: 0 });
   const baseViewBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
+  // Animation recording
+  const frameBufferRef = useRef<string[]>([]);
+  const isRecordingRef = useRef(false);
+  const prevIsFinalRef = useRef(true); // tracks previous isFinal to detect stream start
+  const [isExporting, setIsExporting] = useState<'gif' | 'video' | null>(null);
+  const [exportReady, setExportReady] = useState(false);
+
   /** Apply user zoom on top of the stored base viewBox. */
   const applyZoom = useCallback(() => {
     if (!svgRef.current || !baseViewBoxRef.current) return;
@@ -418,6 +427,15 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         // Apply user zoom on top of the fixed viewBox
         applyZoom();
       }
+
+      // Capture rendered SVG frame for animation export
+      if (isRecordingRef.current) {
+        const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
+        if (svgEl) {
+          const serializer = new XMLSerializer();
+          frameBufferRef.current.push(serializer.serializeToString(svgEl));
+        }
+      }
     } catch {
       // export can fail on partial/malformed elements
     }
@@ -430,6 +448,14 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
 
     // Parse elements from string or array
     const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+
+    // Detect new streaming session: was finished, now starting again
+    if (!isFinal && prevIsFinalRef.current) {
+      frameBufferRef.current = [];
+      setExportReady(false);
+      isRecordingRef.current = true;
+    }
+    prevIsFinalRef.current = isFinal;
 
     if (isFinal) {
       // Final input — parse complete JSON, render ALL elements
@@ -465,7 +491,11 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         captureInitialElements(allConverted);
         // Only set elements if user hasn't edited yet (editedElements means user edits exist)
         if (!editedElements) onElements?.(allConverted);
-        if (!editedElements) renderSvgPreview(drawElements, viewport, base);
+        if (!editedElements) await renderSvgPreview(drawElements, viewport, base);
+
+        // Stop recording and signal export availability
+        isRecordingRef.current = false;
+        setExportReady(frameBufferRef.current.length > 1);
       };
       doFinal();
       return;
@@ -618,12 +648,76 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
     };
   }, [applyZoom]);
 
+  const handleExportGif = useCallback(async () => {
+    if (frameBufferRef.current.length < 2 || isExporting) return;
+    setIsExporting('gif');
+    try {
+      const vp = animatedVP.current ?? { width: 800, height: 600 };
+      const url = await encodeSvgFramesToGif(frameBufferRef.current, vp, 8);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'diagram.gif';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      fsLog(`GIF export failed: ${e}`);
+    } finally {
+      setIsExporting(null);
+    }
+  }, [isExporting]);
+
+  const handleExportVideo = useCallback(async () => {
+    if (frameBufferRef.current.length < 2 || isExporting) return;
+    setIsExporting('video');
+    try {
+      const vp = animatedVP.current ?? { width: 800, height: 600 };
+      const recorder = new VideoRecorder(vp.width, vp.height);
+      recorder.start();
+      for (const frame of frameBufferRef.current) {
+        await recorder.captureFrame(frame);
+        await new Promise(res => setTimeout(res, 80)); // ~12 fps
+      }
+      const url = await recorder.stop();
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'diagram.webm';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      fsLog(`Video export failed: ${e}`);
+    } finally {
+      setIsExporting(null);
+    }
+  }, [isExporting]);
+
   return (
-    <div
-      ref={svgRef}
-      className="excalidraw-container"
-      style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
-    />
+    <>
+      <div
+        ref={svgRef}
+        className="excalidraw-container"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+      />
+      {exportReady && displayMode === "inline" && (
+        <div className="export-animation-buttons">
+          <button
+            className="export-btn export-gif-btn"
+            onClick={handleExportGif}
+            disabled={isExporting !== null}
+            title="Export animation as GIF"
+          >
+            {isExporting === 'gif' ? '⏳ Encoding GIF…' : '🎞 Export GIF'}
+          </button>
+          <button
+            className="export-btn export-video-btn"
+            onClick={handleExportVideo}
+            disabled={isExporting !== null}
+            title="Export animation as WebM video"
+          >
+            {isExporting === 'video' ? '⏳ Encoding Video…' : '🎬 Export Video'}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
