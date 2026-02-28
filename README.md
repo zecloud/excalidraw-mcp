@@ -89,6 +89,41 @@ vercel --prod
 
 </details>
 
+## Deploying to Azure Functions
+
+This project supports deployment to Azure Functions using the [Custom Handler](https://learn.microsoft.com/azure/azure-functions/functions-custom-handlers) pattern.
+
+### Prerequisites
+
+- [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-tools) v4+
+- [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
+- Node.js 20+
+
+### Local development
+
+Copy the example settings file and then start the local Azure Functions host:
+
+```bash
+cp local.settings.example.json local.settings.json
+pnpm run build:azure
+func start
+```
+
+The MCP endpoint will be available at `http://localhost:7071/mcp`.
+
+### Deploy with Azure Developer CLI
+
+```bash
+azd up
+```
+
+### Deploy with Azure Functions Core Tools
+
+```bash
+pnpm run build:azure
+func azure functionapp publish <your-function-app-name>
+```
+
 ## Credits
 
 Built with [Excalidraw](https://github.com/excalidraw/excalidraw) — a virtual whiteboard for sketching hand-drawn like diagrams.
