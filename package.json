@@ -27,6 +27,8 @@
     "start": "cross-env NODE_ENV=development npm run build && npm run serve",
     "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'",
     "dev:ui": "vite --config vite.config.dev.ts",
+    "build:azure": "node scripts/build.mjs && bun build src/azure-functions.ts --outfile dist/azure-functions.js --target node",
+    "start:azure": "node dist/azure-functions.js",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
