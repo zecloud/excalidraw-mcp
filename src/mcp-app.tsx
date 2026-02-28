@@ -430,15 +430,21 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         applyZoom();
       }
 
-      // Capture rendered SVG frame for animation export (ring buffer, keeps most recent MAX_FRAMES)
+      // Capture rendered SVG frame for animation export (ring buffer, keeps most recent MAX_FRAMES).
+      // Re-export with skipInliningFonts: false so font @font-face data is embedded in the SVG
+      // string — otherwise rasterising via <img> in a Blob URL context falls back to default fonts.
       if (isRecordingRef.current) {
-        const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
-        if (svgEl) {
-          const serialized = new XMLSerializer().serializeToString(svgEl);
-          const buffer = frameBufferRef.current;
-          if (buffer.length >= MAX_FRAMES) buffer.shift(); // drop oldest to stay within cap
-          buffer.push(serialized);
-        }
+        const exportSvg = await exportToSvg({
+          elements: excalidrawEls as any,
+          appState: { viewBackgroundColor: "transparent", exportBackground: false } as any,
+          files: null,
+          exportPadding: EXPORT_PADDING,
+          skipInliningFonts: false,
+        });
+        const serialized = new XMLSerializer().serializeToString(exportSvg);
+        const buffer = frameBufferRef.current;
+        if (buffer.length >= MAX_FRAMES) buffer.shift(); // drop oldest to stay within cap
+        buffer.push(serialized);
       }
     } catch (error) {
       // export can fail on partial/malformed elements
