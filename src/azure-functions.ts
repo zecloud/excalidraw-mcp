@@ -4,7 +4,7 @@
  */
 
 import { createVercelStore } from "./checkpoint-store.js";
-import { startStreamableHTTPServer } from "./main.js";
+import { startStreamableHTTPServer } from "./http-server.js";
 import { createServer } from "./server.js";
 
 // Use createVercelStore() which auto-selects Redis (if Upstash env vars present) or Memory
