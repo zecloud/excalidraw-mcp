@@ -17,11 +17,13 @@ import { createServer } from "./server.js";
  * Starts an MCP server with Streamable HTTP transport in stateless mode.
  *
  * @param createServer - Factory function that creates a new McpServer instance per request.
+ * @param options - Optional configuration (e.g. default port override).
  */
 export async function startStreamableHTTPServer(
   createServer: () => McpServer,
+  options?: { defaultPort?: number },
 ): Promise<void> {
-  const port = parseInt(process.env.PORT ?? "3001", 10);
+  const port = parseInt(process.env.PORT ?? String(options?.defaultPort ?? 3001), 10);
 
   const app = createMcpExpressApp({ host: "0.0.0.0" });
   app.use(cors());

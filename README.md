@@ -101,8 +101,11 @@ This project supports deployment to Azure Functions using the [Custom Handler](h
 
 ### Local development
 
+Copy the example settings file and then start the local Azure Functions host:
+
 ```bash
-npm run build:azure
+cp local.settings.example.json local.settings.json
+pnpm run build:azure
 func start
 ```
 
@@ -117,7 +120,7 @@ azd up
 ### Deploy with Azure Functions Core Tools
 
 ```bash
-npm run build:azure
+pnpm run build:azure
 func azure functionapp publish <your-function-app-name>
 ```
 
