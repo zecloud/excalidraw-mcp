@@ -430,16 +430,19 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         applyZoom();
       }
 
-      // Capture rendered SVG frame for animation export (capped to MAX_FRAMES)
-      if (isRecordingRef.current && frameBufferRef.current.length < MAX_FRAMES) {
+      // Capture rendered SVG frame for animation export (ring buffer, keeps most recent MAX_FRAMES)
+      if (isRecordingRef.current) {
         const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
         if (svgEl) {
-          const serializer = new XMLSerializer();
-          frameBufferRef.current.push(serializer.serializeToString(svgEl));
+          const serialized = new XMLSerializer().serializeToString(svgEl);
+          const buffer = frameBufferRef.current;
+          if (buffer.length >= MAX_FRAMES) buffer.shift(); // drop oldest to stay within cap
+          buffer.push(serialized);
         }
       }
-    } catch {
+    } catch (error) {
       // export can fail on partial/malformed elements
+      fsLog(`renderSvgPreview: SVG export failed: ${error}`);
     }
   }, [applyViewBox, animateViewBox, applyZoom]);
 
@@ -507,7 +510,9 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         isRecordingRef.current = false;
         setExportReady(frameBufferRef.current.length > 1);
       };
-      doFinal();
+      // Chain the final render onto the serialized render queue so it cannot
+      // interleave with any in-flight streaming renders, preserving frame order.
+      renderSerialRef.current = renderSerialRef.current.then(() => doFinal()).catch((error) => { fsLog(`Final render failed: ${error}`); });
       return;
     }
 
@@ -663,11 +668,23 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
     };
   }, [applyZoom]);
 
+  /** Parse an SVG element's viewBox into { width, height }, returning null on failure/NaN. */
+  const getExportViewport = useCallback((): { width: number; height: number } | null => {
+    const svgEl = svgRef.current?.querySelector('.svg-wrapper svg') as SVGSVGElement | null;
+    const vb = svgEl?.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
+    if (vb && vb.length === 4 && vb.every(n => !isNaN(n))) {
+      return { width: vb[2], height: vb[3] };
+    }
+    return null;
+  }, []);
+
   const handleExportGif = useCallback(async () => {
     if (frameBufferRef.current.length < 2 || isExporting) return;
     setIsExporting('gif');
     try {
-      const vp = animatedVP.current ?? { width: 800, height: 600 };
+      // Derive export dimensions from the rendered SVG viewBox so the GIF
+      // matches the 4:3-normalised aspect ratio the user actually sees.
+      const vp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
       const url = await encodeSvgFramesToGif(frameBufferRef.current, vp, 8);
       const a = document.createElement('a');
       a.href = url;
@@ -679,14 +696,20 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
     } finally {
       setIsExporting(null);
     }
-  }, [isExporting]);
+  }, [isExporting, getExportViewport]);
 
   const handleExportVideo = useCallback(async () => {
     if (frameBufferRef.current.length < 2 || isExporting) return;
     setIsExporting('video');
     try {
-      const vp = animatedVP.current ?? { width: 800, height: 600 };
-      const recorder = new VideoRecorder(vp.width, vp.height);
+      // Derive export dimensions from the rendered SVG viewBox (matches 4:3-normalised preview),
+      // capped at 512 px wide to avoid over-large canvas allocations.
+      const rawVp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
+      const MAX_VIDEO_WIDTH = 512;
+      const scale = Math.min(1, MAX_VIDEO_WIDTH / rawVp.width);
+      const vpWidth  = Math.round(rawVp.width  * scale);
+      const vpHeight = Math.round(rawVp.height * scale);
+      const recorder = new VideoRecorder(vpWidth, vpHeight);
       recorder.start();
       for (const frame of frameBufferRef.current) {
         await recorder.captureFrame(frame);
@@ -703,7 +726,7 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
     } finally {
       setIsExporting(null);
     }
-  }, [isExporting]);
+  }, [isExporting, getExportViewport]);
 
   return (
     <>

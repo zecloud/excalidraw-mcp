@@ -85,7 +85,7 @@ function lzwEncode(pixels: Uint8Array, minCodeSize: number): number[] {
       emit(prefixCode);
       if (nextCode < 4096) {
         table.set(key, nextCode++);
-        if (nextCode > (1 << codeSize) && codeSize < 12) {
+        if (nextCode >= (1 << codeSize) && codeSize < 12) {
           codeSize++;
         }
       } else {
