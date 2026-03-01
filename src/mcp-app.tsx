@@ -5,6 +5,8 @@ import morphdom from "morphdom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { initPencilAudio, playStroke } from "./pencil-audio";
 import { captureInitialElements, onEditorChange, setStorageKey, loadPersistedElements, getLatestEditedElements, setCheckpointId } from "./edit-context";
+import { encodeSvgFramesToGif, MAX_GIF_FRAMES } from "./gif-recorder";
+import { VideoRecorder } from "./video-recorder";
 import "./global.css";
 
 // ============================================================
@@ -286,6 +288,16 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
   const zoomRef = useRef({ scale: 1, panX: 0, panY: 0 });
   const baseViewBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
+  // Animation recording
+  const MAX_FRAMES = MAX_GIF_FRAMES; // cap buffer to bound memory and export time
+  const frameBufferRef = useRef<string[]>([]);
+  const isRecordingRef = useRef(false);
+  const lastFrameCaptureRef = useRef<number>(0); // timestamp of last frame captured (for throttling)
+  const prevIsFinalRef = useRef(true); // tracks previous isFinal to detect stream start
+  const renderSerialRef = useRef<Promise<void>>(Promise.resolve()); // serializes renders during streaming
+  const [isExporting, setIsExporting] = useState<"gif" | "video" | null>(null);
+  const [exportReady, setExportReady] = useState(false);
+
   /** Apply user zoom on top of the stored base viewBox. */
   const applyZoom = useCallback(() => {
     if (!svgRef.current || !baseViewBoxRef.current) return;
@@ -418,8 +430,38 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         // Apply user zoom on top of the fixed viewBox
         applyZoom();
       }
-    } catch {
-      // export can fail on partial/malformed elements
+
+      // Capture rendered SVG frame for animation export (ring buffer, keeps most recent MAX_FRAMES).
+      // Re-export with skipInliningFonts: false so font @font-face data is embedded in the SVG
+      // string — otherwise rasterising via <img> in a Blob URL context falls back to default fonts.
+      // Throttled to at most once per 200 ms to avoid doubling CPU cost on every streaming render;
+      // the final frame always bypasses the throttle (lastFrameCaptureRef is reset to 0 in doFinal).
+      const CAPTURE_INTERVAL_MS = 200;
+      if (isRecordingRef.current && Date.now() - lastFrameCaptureRef.current >= CAPTURE_INTERVAL_MS) {
+        lastFrameCaptureRef.current = Date.now();
+        const exportSvg = await exportToSvg({
+          elements: excalidrawEls as any,
+          appState: { viewBackgroundColor: "transparent", exportBackground: false } as any,
+          files: null,
+          exportPadding: EXPORT_PADDING,
+          skipInliningFonts: false,
+        });
+        // Copy the rendered DOM svg's viewBox onto the export SVG so the captured frame reflects
+        // the same 4:3-normalised + user-zoom viewport that is shown on screen.
+        const renderedViewBox = renderedSvg?.getAttribute("viewBox");
+        if (renderedViewBox) {
+          exportSvg.setAttribute("viewBox", renderedViewBox);
+        }
+        const serialized = new XMLSerializer().serializeToString(exportSvg);
+        const buffer = frameBufferRef.current;
+        if (buffer.length >= MAX_FRAMES) buffer.shift(); // drop oldest to stay within cap
+        buffer.push(serialized);
+      }
+    } catch (error) {
+      // export can fail on partial/malformed elements; rethrow so the upstream serial-queue
+      // .catch() handlers see the failure and the queue does not silently advance.
+      fsLog(`renderSvgPreview: SVG export failed: ${error}`);
+      throw error;
     }
   }, [applyViewBox, animateViewBox, applyZoom]);
 
@@ -431,7 +473,29 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
     // Parse elements from string or array
     const str = typeof raw === "string" ? raw : JSON.stringify(raw);
 
+    // Detect new streaming session: was finished, now starting again
+    if (!isFinal && prevIsFinalRef.current) {
+      // Wait for any in-flight renders from the previous session to finish before
+      // clearing the frame buffer and starting recording, so stale renders from the
+      // old session can't push frames into the new session's buffer.
+      const previousChain = renderSerialRef.current;
+      renderSerialRef.current = previousChain.then(() => {
+        frameBufferRef.current = [];
+        lastFrameCaptureRef.current = 0;
+        setExportReady(false);
+        isRecordingRef.current = true;
+      });
+    }
+    prevIsFinalRef.current = isFinal;
+
     if (isFinal) {
+      // If a standalone final payload arrives without a preceding stream, clear
+      // any stale frames/export state from a previous session.
+      if (!isRecordingRef.current) {
+        frameBufferRef.current = [];
+        setExportReady(false);
+      }
+
       // Final input — parse complete JSON, render ALL elements
       const parsed = parsePartialElements(str);
       let { viewport, drawElements, restoreId, deleteIds } = extractViewportAndElements(parsed);
@@ -439,35 +503,45 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       // Load checkpoint base if restoring (async — from server)
       let base: any[] | undefined;
       const doFinal = async () => {
-        if (restoreId && loadCheckpoint) {
-          const saved = await loadCheckpoint(restoreId);
-          if (saved) {
-            base = saved.elements;
-            // Extract camera from base as fallback
-            if (!viewport) {
-              const cam = base.find((el: any) => el.type === "cameraUpdate");
-              if (cam) viewport = { x: cam.x, y: cam.y, width: cam.width, height: cam.height };
+        try {
+          if (restoreId && loadCheckpoint) {
+            const saved = await loadCheckpoint(restoreId);
+            if (saved) {
+              base = saved.elements;
+              // Extract camera from base as fallback
+              if (!viewport) {
+                const cam = base.find((el: any) => el.type === "cameraUpdate");
+                if (cam) viewport = { x: cam.x, y: cam.y, width: cam.width, height: cam.height };
+              }
+              // Convert base with convertRawElements (handles both raw and already-converted)
+              base = convertRawElements(base);
             }
-            // Convert base with convertRawElements (handles both raw and already-converted)
-            base = convertRawElements(base);
+            if (base && deleteIds.size > 0) {
+              base = base.filter((el: any) => !deleteIds.has(el.id) && !deleteIds.has(el.containerId));
+            }
           }
-          if (base && deleteIds.size > 0) {
-            base = base.filter((el: any) => !deleteIds.has(el.id) && !deleteIds.has(el.containerId));
-          }
+
+          latestRef.current = drawElements;
+          // Convert new elements for fullscreen editor
+          const convertedNew = convertRawElements(drawElements);
+
+          // Merge base (converted) + new converted
+          const allConverted = base ? [...base, ...convertedNew] : convertedNew;
+          captureInitialElements(allConverted);
+          // Only set elements if user hasn't edited yet (editedElements means user edits exist)
+          if (!editedElements) onElements?.(allConverted);
+          // Reset capture throttle so the final frame is always stored regardless of timing
+          lastFrameCaptureRef.current = 0;
+          if (!editedElements) await renderSvgPreview(drawElements, viewport, base);
+        } finally {
+          // Always stop recording and signal export availability, even if an earlier step throws
+          isRecordingRef.current = false;
+          setExportReady(frameBufferRef.current.length > 1);
         }
-
-        latestRef.current = drawElements;
-        // Convert new elements for fullscreen editor
-        const convertedNew = convertRawElements(drawElements);
-
-        // Merge base (converted) + new converted
-        const allConverted = base ? [...base, ...convertedNew] : convertedNew;
-        captureInitialElements(allConverted);
-        // Only set elements if user hasn't edited yet (editedElements means user edits exist)
-        if (!editedElements) onElements?.(allConverted);
-        if (!editedElements) renderSvgPreview(drawElements, viewport, base);
       };
-      doFinal();
+      // Chain the final render onto the serialized render queue so it cannot
+      // interleave with any in-flight streaming renders, preserving frame order.
+      renderSerialRef.current = renderSerialRef.current.then(() => doFinal()).catch((error) => { fsLog(`Final render failed: ${error}`); });
       return;
     }
 
@@ -520,10 +594,15 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
         latestRef.current = drawElements;
         setCount(drawElements.length);
         const jittered = drawElements.map((el: any) => ({ ...el, seed: Math.floor(Math.random() * 1e9) }));
-        renderSvgPreview(jittered, viewport, base);
+        // Serialize renders while recording so frames are captured in stream order
+        renderSerialRef.current = renderSerialRef.current
+          .then(() => renderSvgPreview(jittered, viewport, base))
+          .catch((e) => { fsLog(`renderSvgPreview error (stream): ${e}`); });
       } else if (base && base.length > 0 && latestRef.current.length === 0) {
         // First render: show restored base before new elements stream in
-        renderSvgPreview([], viewport, base);
+        renderSerialRef.current = renderSerialRef.current
+          .then(() => renderSvgPreview([], viewport, base))
+          .catch((e) => { fsLog(`renderSvgPreview error (base): ${e}`); });
       }
     };
     doStream();
@@ -618,12 +697,104 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
     };
   }, [applyZoom]);
 
+  /** Parse an SVG element's viewBox into { width, height }, returning null on failure/NaN. */
+  const getExportViewport = useCallback((): { width: number; height: number } | null => {
+    const svgEl = svgRef.current?.querySelector(".svg-wrapper svg") as SVGSVGElement | null;
+    const vb = svgEl?.getAttribute("viewBox")?.trim()?.split(/\s+/).map(Number);
+    if (vb && vb.length === 4 && vb.every(n => !isNaN(n))) {
+      return { width: vb[2], height: vb[3] };
+    }
+    return null;
+  }, []);
+
+  const handleExportGif = useCallback(async () => {
+    if (frameBufferRef.current.length < 2 || isExporting) return;
+    setIsExporting("gif");
+    try {
+      // Derive export dimensions from the rendered SVG viewBox so the GIF
+      // matches the 4:3-normalised aspect ratio the user actually sees.
+      const vp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
+      const frames = frameBufferRef.current.slice();
+      const url = await encodeSvgFramesToGif(frames, vp, 8);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "diagram.gif";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      fsLog(`GIF export failed: ${e}`);
+    } finally {
+      setIsExporting(null);
+    }
+  }, [isExporting, getExportViewport]);
+
+  const handleExportVideo = useCallback(async () => {
+    if (frameBufferRef.current.length < 2 || isExporting) return;
+    setIsExporting("video");
+    try {
+      // Derive export dimensions from the rendered SVG viewBox (matches 4:3-normalised preview),
+      // capped at 512 px wide to avoid over-large canvas allocations.
+      const rawVp = getExportViewport() ?? animatedVP.current ?? { width: 800, height: 600 };
+      const MAX_VIDEO_WIDTH = 512;
+      // Guard against non-positive dimensions (e.g., zero-sized or missing viewBox)
+      const safeVp = (rawVp.width > 0 && rawVp.height > 0) ? rawVp : { width: 800, height: 600 };
+      const scale = Math.min(1, MAX_VIDEO_WIDTH / safeVp.width);
+      const vpWidth  = Math.max(2, Math.round(safeVp.width  * scale));
+      const vpHeight = Math.max(2, Math.round(safeVp.height * scale));
+      const recorder = new VideoRecorder(vpWidth, vpHeight);
+      recorder.start();
+      try {
+        const frames = frameBufferRef.current.slice();
+        for (const frame of frames) {
+          await recorder.captureFrame(frame);
+          await new Promise(res => setTimeout(res, 80)); // ~12 fps
+        }
+      } catch (frameErr) {
+        // Stop the recorder to release the MediaStream before propagating the error.
+        try { await recorder.stop(); } catch { /* ignore secondary stop error */ }
+        throw frameErr;
+      }
+      const url = await recorder.stop();
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "diagram.webm";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      fsLog(`Video export failed: ${e}`);
+    } finally {
+      setIsExporting(null);
+    }
+  }, [isExporting, getExportViewport]);
+
   return (
-    <div
-      ref={svgRef}
-      className="excalidraw-container"
-      style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
-    />
+    <>
+      <div
+        ref={svgRef}
+        className="excalidraw-container"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+      />
+      {exportReady && displayMode === "inline" && (
+        <div className="export-animation-buttons">
+          <button
+            className="export-btn export-gif-btn"
+            onClick={handleExportGif}
+            disabled={isExporting !== null}
+            title="Export animation as GIF"
+          >
+            {isExporting === "gif" ? "⏳ Encoding GIF…" : "🎞 Export GIF"}
+          </button>
+          <button
+            className="export-btn export-video-btn"
+            onClick={handleExportVideo}
+            disabled={isExporting !== null}
+            title="Export animation as WebM video"
+          >
+            {isExporting === "video" ? "⏳ Encoding Video…" : "🎬 Export Video"}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
