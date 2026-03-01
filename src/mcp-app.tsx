@@ -503,38 +503,38 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       // Load checkpoint base if restoring (async — from server)
       let base: any[] | undefined;
       const doFinal = async () => {
-        if (restoreId && loadCheckpoint) {
-          const saved = await loadCheckpoint(restoreId);
-          if (saved) {
-            base = saved.elements;
-            // Extract camera from base as fallback
-            if (!viewport) {
-              const cam = base.find((el: any) => el.type === "cameraUpdate");
-              if (cam) viewport = { x: cam.x, y: cam.y, width: cam.width, height: cam.height };
-            }
-            // Convert base with convertRawElements (handles both raw and already-converted)
-            base = convertRawElements(base);
-          }
-          if (base && deleteIds.size > 0) {
-            base = base.filter((el: any) => !deleteIds.has(el.id) && !deleteIds.has(el.containerId));
-          }
-        }
-
-        latestRef.current = drawElements;
-        // Convert new elements for fullscreen editor
-        const convertedNew = convertRawElements(drawElements);
-
-        // Merge base (converted) + new converted
-        const allConverted = base ? [...base, ...convertedNew] : convertedNew;
-        captureInitialElements(allConverted);
-        // Only set elements if user hasn't edited yet (editedElements means user edits exist)
-        if (!editedElements) onElements?.(allConverted);
         try {
+          if (restoreId && loadCheckpoint) {
+            const saved = await loadCheckpoint(restoreId);
+            if (saved) {
+              base = saved.elements;
+              // Extract camera from base as fallback
+              if (!viewport) {
+                const cam = base.find((el: any) => el.type === "cameraUpdate");
+                if (cam) viewport = { x: cam.x, y: cam.y, width: cam.width, height: cam.height };
+              }
+              // Convert base with convertRawElements (handles both raw and already-converted)
+              base = convertRawElements(base);
+            }
+            if (base && deleteIds.size > 0) {
+              base = base.filter((el: any) => !deleteIds.has(el.id) && !deleteIds.has(el.containerId));
+            }
+          }
+
+          latestRef.current = drawElements;
+          // Convert new elements for fullscreen editor
+          const convertedNew = convertRawElements(drawElements);
+
+          // Merge base (converted) + new converted
+          const allConverted = base ? [...base, ...convertedNew] : convertedNew;
+          captureInitialElements(allConverted);
+          // Only set elements if user hasn't edited yet (editedElements means user edits exist)
+          if (!editedElements) onElements?.(allConverted);
           // Reset capture throttle so the final frame is always stored regardless of timing
           lastFrameCaptureRef.current = 0;
           if (!editedElements) await renderSvgPreview(drawElements, viewport, base);
         } finally {
-          // Always stop recording and signal export availability, even if the render throws
+          // Always stop recording and signal export availability, even if an earlier step throws
           isRecordingRef.current = false;
           setExportReady(frameBufferRef.current.length > 1);
         }
