@@ -5,6 +5,7 @@
 export class VideoRecorder {
   private mediaRecorder: MediaRecorder | null = null;
   private chunks: BlobPart[] = [];
+  private stream: MediaStream | null = null;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
 
@@ -28,7 +29,8 @@ export class VideoRecorder {
     }
 
     this.chunks = [];
-    const stream = this.canvas.captureStream(24); // 24 fps target
+    this.stream = this.canvas.captureStream(24); // 24 fps target
+    const stream = this.stream;
 
     let mimeType: string;
     if (typeof MediaRecorder.isTypeSupported === "function") {
@@ -89,6 +91,8 @@ export class VideoRecorder {
         clearTimeout(timeoutId);
         recorder.onstop  = null;
         recorder.onerror = null;
+        this.stream?.getTracks().forEach(t => t.stop());
+        this.stream = null;
         this.mediaRecorder = null;
         fn();
       };
@@ -110,7 +114,11 @@ export class VideoRecorder {
         settle(() => reject(err ?? new Error("MediaRecorder error")));
       };
 
-      recorder.stop();
+      try {
+        recorder.stop();
+      } catch (err) {
+        settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+      }
     });
   }
 }

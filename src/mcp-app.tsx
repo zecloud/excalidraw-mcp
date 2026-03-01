@@ -743,10 +743,16 @@ function DiagramView({ toolInput, isFinal, displayMode, onElements, editedElemen
       const vpHeight = Math.max(2, Math.round(safeVp.height * scale));
       const recorder = new VideoRecorder(vpWidth, vpHeight);
       recorder.start();
-      const frames = frameBufferRef.current.slice();
-      for (const frame of frames) {
-        await recorder.captureFrame(frame);
-        await new Promise(res => setTimeout(res, 80)); // ~12 fps
+      try {
+        const frames = frameBufferRef.current.slice();
+        for (const frame of frames) {
+          await recorder.captureFrame(frame);
+          await new Promise(res => setTimeout(res, 80)); // ~12 fps
+        }
+      } catch (frameErr) {
+        // Stop the recorder to release the MediaStream before propagating the error.
+        try { await recorder.stop(); } catch { /* ignore secondary stop error */ }
+        throw frameErr;
       }
       const url = await recorder.stop();
       const a = document.createElement("a");
